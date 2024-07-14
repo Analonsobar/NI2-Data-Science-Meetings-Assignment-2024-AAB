@@ -1,0 +1,147 @@
+---
+title: "Shiny web"
+author: "Ana Alonso Bartolomé"
+date: "2024-07-13"
+output: html_document
+---
+
+## Task 3
+
+**Prepare a shiny web application using your own data.**
+
+1.  Applications should have at least 3 inputs widgets to control the presentation of the data.
+
+2.  Marks will be awarded for improved styling 
+
+```{r}
+library(shiny)
+library(ggplot2)
+library(dplyr)
+library(shinythemes)
+
+# Load data
+SCdata <- read.csv("https://raw.githubusercontent.com/Analonsobar/NI2-Data-Science-Meetings-Assignment-2024-AAB/main/Assignment/Shiny/SCdata%20-%20Data.csv")
+
+# Replace commas with periods and turn BRET and NG_NLF to numeric
+SCdata <- SCdata %>%
+  mutate(
+    BRET = as.numeric(gsub(",", ".", BRET)),
+    NG_NLF = as.numeric(gsub(",", ".", NG_NLF))
+  )
+
+# Non-linear fit
+SCdata <- SCdata %>%
+  group_by(Condition) %>%
+  mutate(
+    fit = {
+      data <- cur_data()
+      print(data) 
+      predict(
+        nls(BRET ~ B_max * NG_NLF / (K_d + NG_NLF),
+            start = list(B_max = max(BRET, na.rm = TRUE), K_d = 1),
+            data = data)
+      )
+    }
+  )
+
+# Define UI
+ui <- fluidPage(
+  theme = shinythemes::shinytheme("yeti"),
+  
+  navbarPage(
+    "Saturation Curve Explorer",
+    
+    tabPanel("Plot",
+      sidebarLayout(
+        sidebarPanel(
+          tags$h4("Select Receptors:"), 
+          selectInput("receptors", NULL,
+                      choices = sort(unique(SCdata$Receptor)),
+                      multiple = TRUE,
+                      selected = "CXCR4"),  # CXCR4 as default selected
+          tags$h4("Select Conditions:"),
+          uiOutput("condition_selector"),
+          tags$h4("Y-axis Range:"), 
+          sliderInput("y_range", NULL,
+                      min = 0, max = 3, value = c(0, 1), step = 0.1)  # Slider for y-axis range
+        ),
+        
+        mainPanel(
+          plotOutput("saturationPlot")
+        )
+      )
+    ),
+    
+    tabPanel("About",
+      fluidRow(
+        column(12,
+          h2("About Saturation Curve Explorer"),
+          p("With NanoBRET, the enzyme NanoLuciferase (NLF) is fused to the receptor, while our developed constructs are labeled with the fluorescent partner NG. In presence of its substrate, NLF will emit bioluminescence. Only if the two proteins are in close proximity (<10 nm), such as with ligand induced recruitment, this bioluminescent energy is then transferred to the fluorescent acceptor, which in turn will emit a detectable fluorescent signal. Saturation binding assays can be performed by transfecting a constant amount of the NLF-Receptor DNA and increasing amounts of our NG constructs to represent increasing NG-NLF ratios. This results in a hyperbolic curve, which allows to quantify and compare protein-protein interaction pairs."),
+          p("Author: Ana Alonso Bartolomé"),
+          actionButton("show_image", "Show Image"),
+          conditionalPanel(
+            condition = "output.showImage == true",
+            htmlOutput("Image") 
+          )
+        )
+      )
+    )
+  )
+)
+
+# Define server
+server <- function(input, output, session) {
+  
+  # Reactive expression for filtering data
+  filtered_data <- reactive({
+    req(input$receptors, input$conditions)
+    SCdata %>%
+      filter(Receptor %in% input$receptors,
+             Condition %in% input$conditions)
+  })
+  
+  # Update conditions selector based on selected receptors
+  observe({
+    req(input$receptors)
+    updateCheckboxGroupInput(session, "conditions",
+                             choices = sort(unique(SCdata$Condition[SCdata$Receptor %in% input$receptors])),
+                             selected = sort(unique(SCdata$Condition[SCdata$Receptor %in% input$receptors])))
+  })
+  
+  # Conditions selector
+  output$condition_selector <- renderUI({
+    req(input$receptors)
+    checkboxGroupInput("conditions", NULL,
+                       choices = sort(unique(SCdata$Condition[SCdata$Receptor %in% input$receptors])),
+                       selected = sort(unique(SCdata$Condition[SCdata$Receptor %in% input$receptors])))
+  })
+  
+  # Plot
+  output$saturationPlot <- renderPlot({
+    ggplot(filtered_data(), aes(x = NG_NLF, y = BRET, color = Condition)) +
+      geom_point() +
+      geom_line(aes(y = fit), linetype = "dotted") +
+      labs(x = "NG/NLF",
+           y = "BRET ratio - background (BU)",
+           color = "Condition") +
+      theme_minimal() +
+      coord_cartesian(ylim = input$y_range)  # Adjust y-axis range
+  })
+  
+  # Render image
+  output$Image <- renderUI({
+    imagePath <- "https://raw.githubusercontent.com/Analonsobar/NI2-Data-Science-Meetings-Assignment-2024-AAB/main/Assignment/Shiny/Finished.jpg"
+    tags$img(src = imagePath, width = "30%")
+  })
+  
+  # Show image
+  observeEvent(input$show_image, {
+    output$showImage <- reactive({ TRUE })
+    outputOptions(output, "showImage", suspendWhenHidden = FALSE)
+  })
+}
+
+shinyApp(ui = ui, server = server)
+
+
+```
